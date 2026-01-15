@@ -17,6 +17,13 @@ Then run autonomy:
   python3 scripts/stage1_oracle_autonomy.py
 """
 
+# Allow running as either `python3 -m scripts.<module>` or `python3 scripts/<file>.py`
+import os, sys
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+
 import argparse
 import json
 import math
@@ -56,6 +63,12 @@ class Stage1Bridge(Node):
         self.cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         self.host = host
         self.port = port
+        # Camera follow (helps you instantly find the ego vehicle in the CARLA window)
+        self.follow_camera = bool(self.cfg.get("follow_camera", True))
+        self.camera_mode = str(self.cfg.get("camera_mode", "topdown")).lower()  # "topdown" or "chase"
+        self.camera_height = float(self.cfg.get("camera_height", 50.0))
+        self.chase_distance = float(self.cfg.get("chase_distance", 8.0))
+
 
         self.bridge = CvBridge()
 
@@ -351,10 +364,34 @@ class Stage1Bridge(Node):
             brake=float(brake),
         ))
 
+
+    def _update_spectator(self):
+        if not getattr(self, "follow_camera", False):
+            return
+        if self.vehicle is None:
+            return
+        spec = self.world.get_spectator()
+        tr = self.vehicle.get_transform()
+
+        mode = getattr(self, "camera_mode", "topdown")
+        h = float(getattr(self, "camera_height", 50.0))
+        d = float(getattr(self, "chase_distance", 8.0))
+
+        if mode == "chase":
+            fwd = tr.get_forward_vector()
+            loc = tr.location - fwd * d + carla.Location(z=h)
+            rot = carla.Rotation(pitch=-15.0, yaw=tr.rotation.yaw, roll=0.0)
+        else:
+            loc = tr.location + carla.Location(z=h)
+            rot = carla.Rotation(pitch=-90.0, yaw=tr.rotation.yaw, roll=0.0)
+
+        spec.set_transform(carla.Transform(loc, rot))
+
     def spin(self):
         try:
             while rclpy.ok():
                 self.world.tick()
+                self._update_spectator()
                 snap = self.world.get_snapshot()
                 ros_time = Time(seconds=snap.timestamp.elapsed_seconds).to_msg()
                 clk = Clock()

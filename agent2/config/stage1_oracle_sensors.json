@@ -207,5 +207,9 @@
         "sensor_tick": 0.005
       }
     }
-  ]
+  ],
+  "follow_camera": true,
+  "camera_mode": "topdown",
+  "camera_height": 50.0,
+  "chase_distance": 8.0
 }

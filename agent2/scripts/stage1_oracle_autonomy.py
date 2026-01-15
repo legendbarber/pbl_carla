@@ -18,6 +18,13 @@ Run:
   python3 scripts/stage1_oracle_autonomy.py
 """
 
+# Allow running as either `python3 -m scripts.<module>` or `python3 scripts/<file>.py`
+import os, sys
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+
 import math
 import numpy as np
 

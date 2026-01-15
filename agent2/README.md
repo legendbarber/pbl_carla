@@ -18,14 +18,14 @@
 ```bash
 source /opt/ros/humble/setup.bash
 cd stage1_oracle_stack
-python3 scripts/stage1_bridge.py --config config/stage1_oracle_sensors.json
+python3 -m scripts.stage1_bridge --config config/stage1_oracle_sensors.json
 ```
 
 터미널 3:
 ```bash
 source /opt/ros/humble/setup.bash
 cd stage1_oracle_stack
-python3 scripts/stage1_oracle_autonomy.py
+python3 -m scripts.stage1_oracle_autonomy
 ```
 
 ## 토픽
