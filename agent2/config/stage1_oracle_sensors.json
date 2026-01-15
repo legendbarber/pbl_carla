@@ -1,0 +1,211 @@
+{
+  "vehicle": {
+    "type": "vehicle.lincoln.mkz_2017",
+    "id": "hero",
+    "attributes": {
+      "role_name": "hero"
+    }
+  },
+  "world": {
+    "town": "Town01",
+    "weather": "ClearNoon",
+    "fixed_delta_seconds": 0.05,
+    "synchronous_mode": true
+  },
+  "sensors": [
+    {
+      "type": "sensor.camera.semantic_segmentation",
+      "id": "sem_front",
+      "enabled": true,
+      "spawn_point": {
+        "x": 1.6,
+        "y": 0.0,
+        "z": 1.7,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "image_size_x": 800,
+        "image_size_y": 600,
+        "fov": 90.0,
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.camera.instance_segmentation",
+      "id": "inst_front",
+      "enabled": false,
+      "spawn_point": {
+        "x": 1.6,
+        "y": 0.0,
+        "z": 1.7,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "image_size_x": 800,
+        "image_size_y": 600,
+        "fov": 90.0,
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.camera.rgb",
+      "id": "rgb_front",
+      "enabled": false,
+      "spawn_point": {
+        "x": 1.6,
+        "y": 0.0,
+        "z": 1.7,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "image_size_x": 800,
+        "image_size_y": 600,
+        "fov": 90.0,
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.camera.rgb.wide_angle_lens",
+      "id": "rgb_wide",
+      "enabled": false,
+      "spawn_point": {
+        "x": 0.8,
+        "y": 0.0,
+        "z": 1.8,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "camera_model": "equidistant",
+        "image_size_x": 800,
+        "image_size_y": 600,
+        "fov": 160.0,
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.lidar.ray_cast_semantic",
+      "id": "sem_lidar",
+      "enabled": true,
+      "spawn_point": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 2.4,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "range": 80.0,
+        "channels": 32,
+        "points_per_second": 160000,
+        "rotation_frequency": 20.0,
+        "upper_fov": 10.0,
+        "lower_fov": -30.0,
+        "horizontal_fov": 360.0,
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.lidar.ray_cast",
+      "id": "lidar",
+      "enabled": false,
+      "spawn_point": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 2.4,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "range": 80.0,
+        "channels": 32,
+        "points_per_second": 160000,
+        "rotation_frequency": 20.0,
+        "upper_fov": 10.0,
+        "lower_fov": -30.0,
+        "horizontal_fov": 360.0,
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.other.radar",
+      "id": "radar_front",
+      "enabled": false,
+      "spawn_point": {
+        "x": 2.2,
+        "y": 0.0,
+        "z": 1.2,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "horizontal_fov": 30.0,
+        "vertical_fov": 30.0,
+        "range": 80.0,
+        "points_per_second": 1500,
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.other.gnss",
+      "id": "gnss",
+      "enabled": true,
+      "spawn_point": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 2.0,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.other.imu",
+      "id": "imu",
+      "enabled": true,
+      "spawn_point": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 2.0,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "sensor_tick": 0.05
+      }
+    },
+    {
+      "type": "sensor.camera.dvs",
+      "id": "dvs_front",
+      "enabled": false,
+      "spawn_point": {
+        "x": 1.6,
+        "y": 0.0,
+        "z": 1.7,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "image_size_x": 800,
+        "image_size_y": 600,
+        "fov": 90.0,
+        "sensor_tick": 0.005
+      }
+    }
+  ]
+}
