@@ -1,44 +1,22 @@
-# ROS2 Native Example
-
-This example demonstrates how to utilize the ROS 2 native interface in CARLA.
-
-## Prerequisites
-
-To run this example, ensure `docker` is installed in your system, which is used to launch an instance of `rviz` for visualizing sensor data.
-
-
-## Usage
-
-### Step 1: Start the CARLA Simulator with ROS2 enabled
-Launch the CARLA simulator with the ROS 2 integration enabled:
-
-```bash
-# If running a package:
+cd ~
+cd carla
 ./CarlaUE4.sh --ros2
 
-# If running the editor:
-make launch ARGS="--ros2 --editor-flags='--ros2'"
-```
 
-### Step 2: Run the ROS2 Example
-
-Execute the ROS 2 example script:
-
-```bash
-python3 ros2_native.py --file stack.json
-```
-
-* The `stack.json` file defines the sensor configuration.
-* You can edit this file to adjust the sensor setup according to your requirements.
+python3 sensor_setup2.py -f sensor2.json
+python3 path_follower_pure_pursuit.py --csv global_path.csv --ros-args -p use_sim_time:=true
+python3 carla_scenario_manager.py --delay 10 --ahead 25 --duration 12
 
 
-### Step 3: Run RViz to Visualize Sensor Data
 
-Start `rviz` to visualize the sensor output from CARLA:
 
-> [!NOTE]
-Docker must be installed on your system to complete this step.
+python3 sensor_setup2.py -f sensor2.json
 
-```bash
-./run_rviz.sh
-```
+python3 global_path_loader.py --ros-args -p path_file:=global_path.csv -p publish_hz:=1.0 -p decimate:=1
+
+python3 gnss_localizer_fixed_origin.py --ros-args -p path_file:=global_path.csv -p base_frame:=base_link -p broadcast_tf:=true
+
+python3 global_guidance.py --ros-args -p lookahead_m:=12.0 -p search_window:=200
+
+python3 global_speed_profile.py
+python3 lane_follow_controller_stageE.py

@@ -1,0 +1,141 @@
+{
+  "type": "vehicle.lincoln.mkz_2017",
+  "id": "hero",
+  "sensors": [
+    {
+      "type": "sensor.camera.rgb",
+      "id": "camera_rgb",
+      "spawn_point": {
+        "x": 1.6,
+        "y": 0.0,
+        "z": 1.7,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "image_size_x": 1280,
+        "image_size_y": 720,
+        "fov": 110.0
+      }
+    },
+    {
+      "type": "sensor.camera.rgb",
+      "id": "camera_wide",
+      "spawn_point": {
+        "x": 1.6,
+        "y": 0.0,
+        "z": 1.7,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "image_size_x": 1280,
+        "image_size_y": 720,
+        "fov": 160.0
+      }
+    },
+    {
+      "type": "sensor.camera.semantic_segmentation",
+      "id": "camera_semseg",
+      "spawn_point": {
+        "x": 1.6,
+        "y": 0.0,
+        "z": 1.7,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "image_size_x": 1280,
+        "image_size_y": 720,
+        "fov": 110.0
+      }
+    },
+    {
+      "type": "sensor.lidar.ray_cast",
+      "id": "lidar",
+      "spawn_point": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 2.4,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "range": 100,
+        "channels": 32,
+        "points_per_second": 320000,
+        "rotation_frequency": 20,
+        "upper_fov": 10,
+        "lower_fov": -30
+      }
+    },
+    {
+      "type": "sensor.lidar.ray_cast_semantic",
+      "id": "semantic_lidar",
+      "spawn_point": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 2.4,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "range": 100,
+        "channels": 32,
+        "points_per_second": 320000,
+        "rotation_frequency": 20,
+        "upper_fov": 10,
+        "lower_fov": -30
+      }
+    },
+    {
+      "type": "sensor.other.radar",
+      "id": "radar",
+      "spawn_point": {
+        "x": 2.0,
+        "y": 0.0,
+        "z": 1.0,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {
+        "range": 100,
+        "horizontal_fov": 30,
+        "vertical_fov": 30,
+        "points_per_second": 1500
+      }
+    },
+    {
+      "type": "sensor.other.gnss",
+      "id": "gnss",
+      "spawn_point": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 2.0,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {}
+    },
+    {
+      "type": "sensor.other.imu",
+      "id": "imu",
+      "spawn_point": {
+        "x": 2.0,
+        "y": 0.0,
+        "z": 2.0,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0
+      },
+      "attributes": {}
+    }
+  ]
+}

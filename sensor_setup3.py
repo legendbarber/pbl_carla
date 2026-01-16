@@ -1,0 +1,509 @@
+#!/usr/bin/env python3
+
+"""sensor_setup3.py
+
+sensor_setup2.py 기반 "정석" 수정판.
+
+변경점(핵심)
+- /carla/hero/cmd_vel -> VehicleControl 변환에서 종방향 제어를 PID(+간단 FF)로 교체.
+  기존 P-only(0.5*err)는 마찰/노이즈에 의해 '조금 가다 멈추다' 헌팅이 쉽게 발생.
+- brake가 들어오면 적분을 리셋하고 throttle을 강제로 0.
+
+토픽/센서 구성 및 나머지 로직은 sensor_setup2.py와 동일.
+"""
+
+import argparse
+import json
+import logging
+import time
+import math
+import numpy as np
+import carla
+import cv2
+
+import rclpy
+from rclpy.node import Node
+from rclpy.time import Time
+from sensor_msgs.msg import Image as RosImage, PointCloud2, PointField, NavSatFix, Imu
+from rosgraph_msgs.msg import Clock
+from cv_bridge import CvBridge
+from geometry_msgs.msg import Twist, TransformStamped
+from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
+
+
+def clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+# ==============================================================================
+# -- Publishers ----------------------------------------------------------------
+# ==============================================================================
+
+class CameraPublisher:
+    def __init__(self, node: Node, topic_name: str, frame_id: str):
+        self.node = node
+        self.bridge = CvBridge()
+        self.pub = node.create_publisher(RosImage, topic_name, 10)
+        self.frame_id = frame_id
+        self.node.get_logger().info(f"[Camera] Ready -> {topic_name}")
+
+    def handle(self, image: carla.Image):
+        arr = np.frombuffer(image.raw_data, dtype=np.uint8)
+        arr = arr.reshape((image.height, image.width, 4))[:, :, :3]
+        msg = self.bridge.cv2_to_imgmsg(arr, encoding="bgr8")
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = self.frame_id
+        self.pub.publish(msg)
+
+
+class SemanticDualPublisher:
+    def __init__(self, node: Node, base_topic: str, frame_id: str):
+        self.node = node
+        self.bridge = CvBridge()
+        self.pub_raw = node.create_publisher(RosImage, base_topic + "/image_raw", 10)
+        self.pub_color = node.create_publisher(RosImage, base_topic + "/image_color", 10)
+        self.frame_id = frame_id
+        self.node.get_logger().info(f"[Semantic] Ready -> {base_topic} (Raw & Color)")
+
+    def handle(self, image: carla.Image):
+        # BGRA -> BGR. semantic ID는 R(2) 채널에 들어있음 (ID값 보존)
+        raw_arr = np.frombuffer(image.raw_data, dtype=np.uint8)
+        raw_arr = raw_arr.reshape((image.height, image.width, 4))[:, :, :3]
+        msg_raw = self.bridge.cv2_to_imgmsg(raw_arr, encoding="bgr8")
+        msg_raw.header.stamp = self.node.get_clock().now().to_msg()
+        msg_raw.header.frame_id = self.frame_id
+        self.pub_raw.publish(msg_raw)
+
+        image.convert(carla.ColorConverter.CityScapesPalette)
+        color_arr = np.frombuffer(image.raw_data, dtype=np.uint8)
+        color_arr = color_arr.reshape((image.height, image.width, 4))[:, :, :3]
+        msg_color = self.bridge.cv2_to_imgmsg(color_arr, encoding="bgr8")
+        msg_color.header.stamp = self.node.get_clock().now().to_msg()
+        msg_color.header.frame_id = self.frame_id
+        self.pub_color.publish(msg_color)
+
+
+class LidarPublisher:
+    def __init__(self, node: Node, topic_name: str, frame_id: str):
+        self.node = node
+        self.pub = node.create_publisher(PointCloud2, topic_name, 10)
+        self.frame_id = frame_id
+        self.node.get_logger().info(f"[LiDAR] Ready -> {topic_name}")
+
+    def handle(self, carla_lidar_measurement):
+        header = self.node.get_clock().now().to_msg()
+        lidar_bytes = carla_lidar_measurement.raw_data
+        num_points = len(lidar_bytes) // 16
+
+        msg = PointCloud2()
+        msg.header.stamp = header
+        msg.header.frame_id = self.frame_id
+        msg.height = 1
+        msg.width = num_points
+
+        msg.fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+            PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1)
+        ]
+        msg.is_bigendian = False
+        msg.point_step = 16
+        msg.row_step = 16 * num_points
+        msg.is_dense = False
+        msg.data = bytes(lidar_bytes)
+        self.pub.publish(msg)
+
+
+class SemanticLidarPublisher:
+    def __init__(self, node: Node, topic_name: str, frame_id: str):
+        self.node = node
+        self.pub = node.create_publisher(PointCloud2, topic_name, 10)
+        self.frame_id = frame_id
+        self.node.get_logger().info(f"[SemanticLiDAR] Ready -> {topic_name}")
+
+    def handle(self, semantic_lidar_measurement):
+        data = semantic_lidar_measurement.raw_data
+        point_step = 24
+        num_points = len(data) // point_step
+
+        msg = PointCloud2()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = self.frame_id
+        msg.height = 1
+        msg.width = num_points
+        msg.is_bigendian = False
+        msg.point_step = point_step
+        msg.row_step = point_step * num_points
+        msg.is_dense = False
+        msg.fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+            PointField(name='cos_incidence', offset=12, datatype=PointField.FLOAT32, count=1),
+            PointField(name='obj_idx', offset=16, datatype=PointField.UINT32, count=1),
+            PointField(name='obj_tag', offset=20, datatype=PointField.UINT32, count=1),
+        ]
+        msg.data = bytes(data)
+        self.pub.publish(msg)
+
+
+class RadarPublisher:
+    def __init__(self, node: Node, topic_name: str, frame_id: str):
+        self.node = node
+        self.pub = node.create_publisher(PointCloud2, topic_name, 10)
+        self.frame_id = frame_id
+        self.node.get_logger().info(f"[Radar] Ready -> {topic_name}")
+
+    def handle(self, radar_data):
+        if len(radar_data) == 0:
+            return
+
+        pts = np.frombuffer(radar_data.raw_data, dtype=np.dtype('f4'))
+        pts = np.reshape(pts, (len(radar_data), 4))
+        vel = pts[:, 0]
+        az = pts[:, 1]
+        alt = pts[:, 2]
+        depth = pts[:, 3]
+
+        x = depth * np.cos(alt) * np.cos(az)
+        y = depth * np.cos(alt) * np.sin(az)
+        z = depth * np.sin(alt)
+
+        cloud = np.stack([x, y, z, vel], axis=1).astype(np.float32)
+        data_bytes = cloud.tobytes()
+        num_points = cloud.shape[0]
+
+        msg = PointCloud2()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = self.frame_id
+        msg.height = 1
+        msg.width = num_points
+        msg.is_bigendian = False
+        msg.point_step = 16
+        msg.row_step = 16 * num_points
+        msg.is_dense = False
+        msg.fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+            PointField(name='velocity', offset=12, datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.data = data_bytes
+        self.pub.publish(msg)
+
+
+class GnssPublisher:
+    def __init__(self, node: Node, topic_name: str, frame_id: str):
+        self.node = node
+        self.pub = node.create_publisher(NavSatFix, topic_name, 10)
+        self.frame_id = frame_id
+        self.node.get_logger().info(f"[GNSS] Ready -> {topic_name}")
+
+    def handle(self, gnss):
+        msg = NavSatFix()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = self.frame_id
+        msg.latitude = gnss.latitude
+        msg.longitude = gnss.longitude
+        msg.altitude = gnss.altitude
+        self.pub.publish(msg)
+
+
+class ImuPublisher:
+    def __init__(self, node: Node, topic_name: str, frame_id: str):
+        self.node = node
+        self.pub = node.create_publisher(Imu, topic_name, 10)
+        self.frame_id = frame_id
+        self.node.get_logger().info(f"[IMU] Ready -> {topic_name}")
+
+    def handle(self, imu_data):
+        msg = Imu()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = self.frame_id
+
+        msg.linear_acceleration.x = float(imu_data.accelerometer.x)
+        msg.linear_acceleration.y = float(imu_data.accelerometer.y)
+        msg.linear_acceleration.z = float(imu_data.accelerometer.z)
+
+        msg.angular_velocity.x = float(imu_data.gyroscope.x)
+        msg.angular_velocity.y = float(imu_data.gyroscope.y)
+        msg.angular_velocity.z = float(imu_data.gyroscope.z)
+
+        msg.orientation_covariance[0] = -1.0
+        self.pub.publish(msg)
+
+
+def _euler_deg_to_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
+    roll = math.radians(float(roll_deg))
+    pitch = math.radians(float(pitch_deg))
+    yaw = math.radians(float(yaw_deg))
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+    qw = cr * cp * cy + sr * sp * sy
+    qx = sr * cp * cy - cr * sp * sy
+    qy = cr * sp * cy + sr * cp * sy
+    qz = cr * cp * sy - sr * sp * cy
+    return qx, qy, qz, qw
+
+
+def _update_spectator_follow(world, vehicle, dist=7.0, height=3.0, pitch=-15.0):
+    spectator = world.get_spectator()
+    vt = vehicle.get_transform()
+    forward = vt.get_forward_vector()
+    cam_loc = vt.location + carla.Location(
+        x=-dist * forward.x,
+        y=-dist * forward.y,
+        z=height
+    )
+    cam_rot = carla.Rotation(
+        pitch=pitch,
+        yaw=vt.rotation.yaw,
+        roll=0.0
+    )
+    spectator.set_transform(carla.Transform(cam_loc, cam_rot))
+
+
+def _setup_vehicle(world, config, reverse=False):
+    logging.info(f"Spawning vehicle: {config.get('type')}")
+    bp_library = world.get_blueprint_library()
+    map_ = world.get_map()
+
+    bp = bp_library.filter(config.get("type"))[0]
+    bp.set_attribute("role_name", config.get("id"))
+
+    spawn = map_.get_spawn_points()[0]
+    if reverse:
+        spawn.rotation.yaw += 180.0
+    return world.spawn_actor(bp, spawn)
+
+
+def _setup_sensors(world, vehicle, sensors_config, node):
+    actors = []
+    bp_library = world.get_blueprint_library()
+
+    static_tf_broadcaster = StaticTransformBroadcaster(node)
+    static_tfs = []
+
+    rgb_pubs = {}
+    sem_pubs = {}
+    lidar_pubs = {}
+    sem_lidar_pubs = {}
+    radar_pubs = {}
+    gnss_pubs = {}
+    imu_pubs = {}
+
+    for sensor_conf in sensors_config:
+        sType = sensor_conf.get("type")
+        sID = sensor_conf.get("id")
+
+        bps = bp_library.filter(sType)
+        if not bps:
+            node.get_logger().error(f"[Bridge] Blueprint not found: {sType} (skip)")
+            continue
+        bp = bps[0]
+        for k, v in sensor_conf.get("attributes", {}).items():
+            bp.set_attribute(str(k), str(v))
+
+        sp = sensor_conf.get("spawn_point")
+
+        try:
+            t = TransformStamped()
+            t.header.stamp = node.get_clock().now().to_msg()
+            t.header.frame_id = "base_link"
+            t.child_frame_id = sID
+            t.transform.translation.x = float(sp["x"])
+            t.transform.translation.y = float(sp["y"])
+            t.transform.translation.z = float(sp["z"])
+            qx, qy, qz, qw = _euler_deg_to_quat(sp["roll"], sp["pitch"], sp["yaw"])
+            t.transform.rotation.x = float(qx)
+            t.transform.rotation.y = float(qy)
+            t.transform.rotation.z = float(qz)
+            t.transform.rotation.w = float(qw)
+            static_tfs.append(t)
+        except Exception as e:
+            node.get_logger().warning(f"[TF] Failed to build static TF for {sID}: {e}")
+
+        tr = carla.Transform(
+            carla.Location(x=sp["x"], y=-sp["y"], z=sp["z"]),
+            carla.Rotation(roll=sp["roll"], pitch=-sp["pitch"], yaw=-sp["yaw"])
+        )
+
+        sensor_actor = world.spawn_actor(bp, tr, attach_to=vehicle)
+        actors.append(sensor_actor)
+
+        if sType.startswith("sensor.camera.rgb"):
+            topic = f"/carla/hero/{sID}/image_color"
+            rgb_pubs[sID] = CameraPublisher(node, topic, frame_id=sID)
+            sensor_actor.listen(lambda data, p=rgb_pubs[sID]: p.handle(data))
+
+        elif sType.startswith("sensor.camera.semantic_segmentation"):
+            base_topic = f"/carla/hero/{sID}"
+            sem_pubs[sID] = SemanticDualPublisher(node, base_topic, frame_id=sID)
+            sensor_actor.listen(lambda data, p=sem_pubs[sID]: p.handle(data))
+
+        elif sType == "sensor.lidar.ray_cast":
+            topic = f"/carla/hero/{sID}/point_cloud"
+            lidar_pubs[sID] = LidarPublisher(node, topic, frame_id=sID)
+            sensor_actor.listen(lambda data, p=lidar_pubs[sID]: p.handle(data))
+
+        elif sType == "sensor.lidar.ray_cast_semantic":
+            topic = f"/carla/hero/{sID}/point_cloud"
+            sem_lidar_pubs[sID] = SemanticLidarPublisher(node, topic, frame_id=sID)
+            sensor_actor.listen(lambda data, p=sem_lidar_pubs[sID]: p.handle(data))
+
+        elif sType == "sensor.other.radar":
+            topic = f"/carla/hero/{sID}/point_cloud"
+            radar_pubs[sID] = RadarPublisher(node, topic, frame_id=sID)
+            sensor_actor.listen(lambda data, p=radar_pubs[sID]: p.handle(data))
+
+        elif sType == "sensor.other.gnss":
+            topic = f"/carla/hero/{sID}"
+            gnss_pubs[sID] = GnssPublisher(node, topic, frame_id=sID)
+            sensor_actor.listen(lambda data, p=gnss_pubs[sID]: p.handle(data))
+
+        elif sType == "sensor.other.imu":
+            topic = f"/carla/hero/{sID}"
+            imu_pubs[sID] = ImuPublisher(node, topic, frame_id=sID)
+            sensor_actor.listen(lambda data, p=imu_pubs[sID]: p.handle(data))
+
+    if static_tfs:
+        static_tf_broadcaster.sendTransform(static_tfs)
+        node.get_logger().info(f"[TF] Published {len(static_tfs)} static transforms (base_link -> sensors)")
+
+    return actors
+
+
+def main(args):
+    rclpy.init(args=None)
+    node = rclpy.create_node("carla_ros2_native_bridge")
+
+    client = carla.Client(args.host, args.port)
+    client.set_timeout(10.0)
+    world = client.get_world()
+
+    settings = world.get_settings()
+    settings.synchronous_mode = True
+    settings.fixed_delta_seconds = 0.05
+    world.apply_settings(settings)
+
+    with open(args.file) as f:
+        config = json.load(f)
+
+    vehicle = None
+    sensors = []
+
+    try:
+        vehicle = _setup_vehicle(world, config, reverse=args.reverse)
+        sensors = _setup_sensors(world, vehicle, config.get("sensors", []), node)
+
+        # -------------------- speed PID state --------------------
+        pid_i = 0.0
+        prev_err = 0.0
+        prev_t = time.time()
+        throttle_prev = 0.0
+
+        # Gains tuned for mkz_2017-ish in 20Hz loop
+        KP = 0.45
+        KI = 0.10
+        KD = 0.00
+        I_LIM = 5.0
+        THROTTLE_MIN_MOVING = 0.22
+        THROTTLE_SMOOTH_ALPHA = 0.25  # 0..1
+
+        def on_cmd(msg: Twist):
+            nonlocal pid_i, prev_err, prev_t, throttle_prev
+
+            now = time.time()
+            dt = clamp(now - prev_t, 0.02, 0.20)
+            prev_t = now
+
+            v_curr = math.sqrt(vehicle.get_velocity().x ** 2 + vehicle.get_velocity().y ** 2)
+            v_target = float(msg.linear.x)
+            steer = float(msg.angular.z) / 35.0
+            brake = clamp(float(msg.linear.y), 0.0, 1.0)
+
+            # --- steering clamp ---
+            steer = clamp(steer, -1.0, 1.0)
+
+            # --- braking priority ---
+            if brake > 1e-3 or v_target < 0.05:
+                pid_i = 0.0
+                prev_err = 0.0
+                throttle_prev = 0.0
+                vehicle.apply_control(carla.VehicleControl(
+                    throttle=0.0,
+                    steer=float(steer),
+                    brake=float(max(brake, 1.0 if v_target < 0.05 else brake))
+                ))
+                return
+
+            # --- PID on speed ---
+            err = v_target - v_curr
+            pid_i = clamp(pid_i + err * dt, -I_LIM, I_LIM)
+            derr = (err - prev_err) / dt
+            prev_err = err
+
+            u = KP * err + KI * pid_i + KD * derr
+
+            # small feed-forward (helps overcome stiction)
+            u += clamp(v_target / 25.0, 0.0, 0.35)
+
+            throttle = clamp(u, 0.0, 1.0)
+            if v_target > 1.0 and v_curr < 0.5:
+                throttle = max(throttle, THROTTLE_MIN_MOVING)
+
+            # smooth throttle
+            throttle = (1.0 - THROTTLE_SMOOTH_ALPHA) * throttle_prev + THROTTLE_SMOOTH_ALPHA * throttle
+            throttle_prev = throttle
+
+            vehicle.apply_control(carla.VehicleControl(
+                throttle=float(throttle),
+                steer=float(steer),
+                brake=float(0.0)
+            ))
+
+        node.create_subscription(Twist, '/carla/hero/cmd_vel', on_cmd, 10)
+        node.get_logger().info("[Bridge] Started. Publishing Raw & Color semantics.")
+
+        clock_pub = node.create_publisher(Clock, '/clock', 10)
+
+        while rclpy.ok():
+            world.tick()
+            _update_spectator_follow(world, vehicle)
+
+            snapshot = world.get_snapshot()
+            ros_time = Time(seconds=snapshot.timestamp.elapsed_seconds).to_msg()
+            clock_msg = Clock()
+            clock_msg.clock = ros_time
+            clock_pub.publish(clock_msg)
+            rclpy.spin_once(node, timeout_sec=0.001)
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        settings = world.get_settings()
+        settings.synchronous_mode = False
+        world.apply_settings(settings)
+        for s in sensors:
+            if s.is_alive:
+                s.destroy()
+        if vehicle and vehicle.is_alive:
+            vehicle.destroy()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('--host', default='localhost')
+    argparser.add_argument('--port', default=2000, type=int)
+    argparser.add_argument('-f', '--file', required=True)
+    argparser.add_argument('--reverse', action='store_true')
+    args = argparser.parse_args()
+    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+    main(args)
