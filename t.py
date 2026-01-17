@@ -1,10 +1,13 @@
-
 import carla
-c = carla.Client("localhost", 2000)
-c.set_timeout(2.0)
+c = carla.Client("127.0.0.1", 2000)
+c.set_timeout(5.0)
+print("carla_module:", carla.__file__)
+print("server_version:", c.get_server_version())
+try:
+    print("client_version:", c.get_client_version())
+except Exception as e:
+    print("client_version: (err)", e)
 w = c.get_world()
-vs = w.get_actors().filter("vehicle.*")
-print("num_vehicles:", len(vs))
-for v in vs:
-    print(v.id, v.type_id, v.attributes.get("role_name",""))
-
+actors = w.get_actors()
+print("actors_total:", len(actors))
+print("vehicles:", len(actors.filter("vehicle.*")))
